@@ -63,35 +63,50 @@ typedef void *(*malloc_t)(size_t size);
 malloc_t malloc_f = nullptr;
 typedef void (*free_t)(void *ptr);
 free_t free_f = nullptr;
+int enable_malloc = 1;
+int enable_free = 1;
+
 // 自定义的malloc函数
 void* malloc(size_t size) {
 	void* p = NULL;
-	p = malloc_f(size);
-    // 直接取到上一层调用的函数地址
-	void* caller = __builtin_return_address(0);
-	char buff[128] = { 0 };
-	sprintf(buff, "./mem/%p.mem", p);
-	FILE* fp = fopen(buff, "w");
-	if (!fp) {
-		free(p);
-		return nullptr;
-	}
+    if (enable_malloc) {
+        enable_malloc = 0;
+        p = malloc_f(size);
+        // 直接取到上一层调用的函数地址
+        void* caller = __builtin_return_address(0);
+        char buff[128] = { 0 };
+        sprintf(buff, "./mem/%p.mem", p);
+        FILE* fp = fopen(buff, "w");
+        if (!fp) {
+            free(p);
+            return nullptr;
+        }
 
-	fprintf(fp, "caller:%p, addr: %p, size: %ld\n", caller, p, size);
-	fflush(fp);
-	fclose(fp);
+        fprintf(fp, "caller:%p, addr: %p, size: %ld\n", caller, p, size);
+        fflush(fp);
+        fclose(fp);
+        enable_malloc = 1;
+    } else {
+        p = malloc_f(size);
+    }
 	return p;
 }
 
 // 自定义的释放函数
 void free(void* ptr) {
-	char buff[128] = { 0 };
-	snprintf(buff, 128, "./mem/%p.mem", ptr);
-	if (unlink(buff) < 0) {
-		printf("double free: %p", ptr);
-		return;
-	}
-	free_f(ptr);
+    if (enable_free) {
+        enable_free = 0;
+        char buff[128] = { 0 };
+        snprintf(buff, 128, "./mem/%p.mem", ptr);
+        if (unlink(buff) < 0) {
+            printf("double free: %p", ptr);
+            return;
+        }
+        free_f(ptr);
+        enable_free = 1;
+    } else {
+        free_f(ptr);
+    }
 	return;
 }
 // 对系统和函数进行hook
@@ -103,7 +118,6 @@ void init_hook(void) {
 		free_f = (free_t)dlsym(RTLD_NEXT, "free");
 	}
 }
-
 ```
 
 通过获取上一层调用的函数地址caller，就可以通过addr2line获取内存泄漏的位置:
@@ -131,18 +145,24 @@ void* ConvertToELF(void* addr) {
 
 void* malloc(size_t size) {
 	void* p = nullptr;
-	p = malloc_f(size);
-	void* caller = __builtin_return_address(0);
-	char buff[128] = { 0 };
-	sprintf(buff, "./mem/%p.mem", p);
-	FILE* fp = fopen(buff, "w");
-	if (!fp) {
-		free(p);
-		return NULL;
-	}
-	fprintf(fp, "ELF: %p, addr: %p, size: %ld\n", ConvertToELF(caller), p, size);
-	fflush(fp);
-	fclose(fp);
+    if (enable_malloc) {
+        enable_malloc = 0;
+        p = malloc_f(size);
+        void* caller = __builtin_return_address(0);
+        char buff[128] = { 0 };
+        sprintf(buff, "./mem/%p.mem", p);
+        FILE* fp = fopen(buff, "w");
+        if (!fp) {
+            free(p);
+            return NULL;
+        }
+        fprintf(fp, "ELF: %p, addr: %p, size: %ld\n", ConvertToELF(caller), p, size);
+        fflush(fp);
+        fclose(fp);
+        enable_malloc = 1;
+    } else {
+        p = malloc_f(size);
+    }
 	return p;
 }
 ```
